@@ -1,0 +1,9 @@
+dash==2.18.1
+dash-daq==0.5.0
+plotly==5.24.1
+pandas
+numpy
+datetime
+astropy
+duckdb
+skyfield
