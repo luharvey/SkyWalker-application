@@ -3,14 +3,14 @@
 
 #Module import
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib import rc
+#import matplotlib.pyplot as plt
+#from matplotlib import rc
 import pandas as pd
 from datetime import date
 from skyfield.api import load
 from astropy.time import Time
 import functions
-from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
+#from matplotlib.ticker import (MultipleLocator, AutoMinorLocator)
 import duckdb
 import plotly.graph_objects as go
 import base64
