@@ -25,16 +25,6 @@ today = str(date.today()) + 'T00:00:00.0'
 t = Time(today, format = 'isot', scale = 'utc')
 today_mjd = t.mjd
 
-#Font properties
-plt.rcParams["font.family"] = "Times New Roman"
-plt.rcParams['mathtext.fontset'] = 'custom'
-plt.rcParams['mathtext.rm'] = 'Times New Roman'
-plt.rcParams['mathtext.it'] = 'Times New Roman'
-plt.rcParams['mathtext.bf'] = 'Times New Roman'
-
-rc('xtick', labelsize=16)
-rc('ytick', labelsize=16)
-
 #Plot styles
 linestyles = {0:'-', 1:'-.', 2:':', 3:'--'}
 colours = ['C3', '#FC6A0B', '#FCBE0B', '#00E65B', '#4BE1C3', 'C9', '#488DFF', '#B27CFF', 'C6', '#FF51B5']
