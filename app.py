@@ -370,7 +370,7 @@ def layout():
         ]
 
 #Creating night instance
-global n
+#global n
 n = skywalker.night('aao')
 #n.load_targets('/Users/luharvey/GitHub/SkyWalker/pessto_test_classifications_cut.csv')
 
