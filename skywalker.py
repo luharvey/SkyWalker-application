@@ -31,7 +31,7 @@ colours = ['C3', '#FC6A0B', '#FCBE0B', '#00E65B', '#4BE1C3', 'C9', '#488DFF', '#
 
 #Night class
 class night():
-    def __init__(self, obs_id, date = today_mjd, min_angle = 0, max_angle = 90, minimum_lunar_distance = 20, limiting_twilight = 'astronomical'):
+    def __init__(self, obs_id, date = today_mjd, min_angle = 0, max_angle = 90, minimum_lunar_distance = 20, limiting_twilight = 'astronomical', restricted_directions = []):
         #Initialising class properties
 
         #Targets:
@@ -57,7 +57,7 @@ class night():
         self.limiting_twilight = limiting_twilight
 
         #Queue:
-        self.restricted_directions = []
+        self.restricted_directions = restricted_directions
         self.queue = pd.DataFrame(columns = ['name', 'ra', 'dec', 'priority', 'obs_times', 'obs_time_angles', 'night_peak', 'start_angle', 'start_ut']).set_index('name')
 
         #=--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--=
@@ -361,13 +361,15 @@ class night():
             if type(obs_times) == list:
                 if len(obs_times) == len(objects):
                     self.obs_times = obs_times
-                    self.obs_times_angles = list(np.array(obs_times) * functions.degrees_per_second)
+                    self.obs_times_angles = []
+                    for i in range(len(self.obs_times)):
+                        self.obs_times_angles.append(self.obs_times[i] * functions.degrees_per_second)
                 else:
                     print('The obs_times and object lists must be equal in length.')
                     return -1
             else:
-                self.ob_times = list(np.zeros_like(objects) + 600)
-                self.obs_times_angles = list(np.zeros_like(objects) + np.ceil(600 * functions.degrees_per_second))
+                self.obs_times = list(np.zeros(len(objects)) + 600)
+                self.obs_times_angles = list(np.zeros(len(objects)) + np.ceil(600 * functions.degrees_per_second))
 
             for i in range(len(self.obs_times_angles)):
                 self.obs_times_angles[i] = int(np.ceil(self.obs_times_angles[i]))

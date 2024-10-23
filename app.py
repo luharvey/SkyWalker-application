@@ -15,6 +15,9 @@ from astropy.time import Time
 app = Dash(__name__)
 server = app.server
 
+#Creating night instance
+n = skywalker.night('aao')
+
 #Creating the title and description card
 def title_card():
     """
@@ -366,13 +369,9 @@ def layout():
                     ], style={'margin-top':100})
                 ],
             style={'background-color': '#1e1e1e', 'font-family':'Trebuchet MS', "height": "100vh"}
-            )
+            ),
+        dcc.Store(id = 'night-object')
         ]
-
-#Creating night instance
-#global n
-n = skywalker.night('aao')
-#n.load_targets('/Users/luharvey/GitHub/SkyWalker/pessto_test_classifications_cut.csv')
 
 fig_paths = n.plot_paths(dashapp = True, dark = True)
 fig_queue = n.plot_paths(dashapp = True, dark = True)
@@ -391,21 +390,38 @@ app.layout = layout()
     Output("data_table", "data"),
     Output("upload_data", "filename"),
     Output("upload_data", "contents"),
-    Output('add_target_text', 'value'),
+    Output("add_target_text", "value"),
+    Output("night-object", "data"),
 
+    Input("night-object", "data"),
     Input("date_picker", "date"),
     Input("observatory_dropdown", "value"),
     Input("upload_data", "contents"),
     Input("minimum_angle", "value"),
     Input("maximum_angle", "value"),
     Input("add_target_button", 'n_clicks'),
-    Input('add_target_text', 'value'),
+    State('add_target_text', 'value'),
     Input("minimum_lunar_distance", "value"),
     Input("twilight_dropdown", "value"),
     Input("pointing_checklist", 'value'),
     Input("clear_target_button", 'n_clicks')
     )
-def update_paths_plot(date, observatory, upload_data, min_angle, max_angle, add_target, add_target_text, minimum_lunar_distance, limiting_twilight, restricted_directions, clear_target):
+def update_paths_plot(store_input, date, observatory, upload_data, min_angle, max_angle, add_target, add_target_text, minimum_lunar_distance, limiting_twilight, restricted_directions, clear_target):  
+
+    n = skywalker.night(
+        obs_id = observatories['ID'][observatory], 
+        date = date, 
+        min_angle = min_angle, 
+        max_angle = max_angle, 
+        minimum_lunar_distance = minimum_lunar_distance, 
+        limiting_twilight = limiting_twilight.lower(), 
+        restricted_directions = restricted_directions)
+
+    if store_input != None:
+        if len(store_input['names']) != 0:
+            n.load_targets(objects = store_input['target_coords'], names = store_input['names'], obs_times = store_input['obs_times'], priorities = store_input['priorities'])
+
+    """
     #Updating date
     if date != n.date_ymd:
         n.change_date(date)
@@ -427,6 +443,8 @@ def update_paths_plot(date, observatory, upload_data, min_angle, max_angle, add_
     #Updating unallowed pointings
     if restricted_directions != n.restricted_directions:
         n.change_restricted_directions(restricted_directions)
+    """
+
     #Uploading targets
     if upload_data != None:
         n.load_targets_dashapp(upload_data)
@@ -466,7 +484,7 @@ def update_paths_plot(date, observatory, upload_data, min_angle, max_angle, add_
                     obs_time = None
             
                 n.add_target(ra, dec, name = name, obs_time = obs_time, priority = priority)
-            
+
             except:
                 pass
 
@@ -477,13 +495,22 @@ def update_paths_plot(date, observatory, upload_data, min_angle, max_angle, add_
     #Updating output table
     output_table = n.data.copy().reset_index()
 
-    return n.plot_paths(dashapp = True, dark = True), output_table.to_dict('records'), '', None, output_text
+    #Creating store output dictionary
+    store_output = {
+        'target_coords':n.target_coords,
+        'names':n.names,
+        'priorities':n.priorities,
+        'obs_times':n.obs_times,
+        }
+
+    return n.plot_paths(dashapp = True, dark = True), output_table.to_dict('records'), '', None, output_text, store_output
 
 #User input observability plot and data table tabs
 @app.callback(
     Output("graph_queue", "figure"),
     Output("queue_table", "data"),
 
+    Input("night-object", "data"),
     Input("gen_queue", 'n_clicks'),
     Input("date_picker", "date"),
     Input("observatory_dropdown", "value"),
@@ -497,8 +524,20 @@ def update_paths_plot(date, observatory, upload_data, min_angle, max_angle, add_
     Input("pointing_checklist", 'value'),
     Input("clear_target_button", 'n_clicks')
     )
-def update_queue_plot(trigger_queue, date, observatory, upload_data, min_angle, max_angle, add_target, add_target_text, minimum_lunar_distance, limiting_twilight, restricted_directions, clear_target):
-    n.clear_queue()
+def update_queue_plot(store_input, trigger_queue, date, observatory, upload_data, min_angle, max_angle, add_target, add_target_text, minimum_lunar_distance, limiting_twilight, restricted_directions, clear_target):
+
+    n = skywalker.night(
+        obs_id = observatories['ID'][observatory], 
+        date = date, 
+        min_angle = min_angle, 
+        max_angle = max_angle, 
+        minimum_lunar_distance = minimum_lunar_distance, 
+        limiting_twilight = limiting_twilight.lower(), 
+        restricted_directions = restricted_directions)
+
+    if store_input != None:
+        if len(store_input['names']) != 0:
+            n.load_targets(objects = store_input['target_coords'], names = store_input['names'], obs_times = store_input['obs_times'], priorities = store_input['priorities'])
 
     if "gen_queue" == ctx.triggered_id:
         n.generate_queue(dashapp = True)
