@@ -6,7 +6,7 @@ import numpy as np
 #import matplotlib.pyplot as plt
 #from matplotlib import rc
 import pandas as pd
-from datetime import date
+from datetime import date as date
 from skyfield.api import load
 from astropy.time import Time
 import functions
@@ -16,44 +16,58 @@ import plotly.graph_objects as go
 import base64
 import io
 
-#Disabling warning regarding the setting of values in dataframe copies
-pd.options.mode.chained_assignment = None
-
 #Initialising time properties
 ts = load.timescale()
 today = str(date.today()) + 'T00:00:00.0'
 t = Time(today, format = 'isot', scale = 'utc')
 today_mjd = t.mjd
 
+#Disabling warning regarding the setting of values in dataframe copies
+pd.options.mode.chained_assignment = None
+
 #Plot styles
 linestyles = {0:'-', 1:'-.', 2:':', 3:'--'}
 colours = ['C3', '#FC6A0B', '#FCBE0B', '#00E65B', '#4BE1C3', 'C9', '#488DFF', '#B27CFF', 'C6', '#FF51B5']
 
 #Night class
-#This is the class that shall be initialised by the user, to which targets can be loaded and from which plots can be generated
 class night():
-    def __init__(self, obs_id, date = today_mjd, min_angle = 0, max_angle = 90, minimum_lunar_distance = 0):
-        #Initialising arrays
+    def __init__(self, obs_id, date = today_mjd, min_angle = 0, max_angle = 90, minimum_lunar_distance = 20, limiting_twilight = 'astronomical'):
+        #Initialising class properties
+
+        #Targets:
         self.target_coords = []
         self.night_peak = []
         self.names = []
         self.priorities = []
         self.obs_times = []
         self.obs_times_angles = []
+
+        #Paths:
         self.paths = {}
+        self.lunar_distances = {}
+        self.nautical_directions = {}
+
+        #Data table:
         self.data = pd.DataFrame(columns = ['name', 'ra', 'dec', 'priority', 'obs_times'])
+
+        #Limiting angles:
         self.min_angle = min_angle
         self.max_angle = max_angle
         self.minimum_lunar_distance = minimum_lunar_distance
+        self.limiting_twilight = limiting_twilight
+
+        #Queue:
+        self.restricted_directions = []
         self.queue = pd.DataFrame(columns = ['name', 'ra', 'dec', 'priority', 'obs_times', 'obs_time_angles', 'night_peak', 'start_angle', 'start_ut']).set_index('name')
-        
-        #Setting observatory properties
+
+        #=--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--=
+
+        #Initial setting of the observatory properties
         self.observatory = functions.retrieve_observatory(obs_id)
         if self.observatory == -1:
             return
         
-        #Setting date property
-        #Input date refers to the date when the local night starts
+        #Initial setting of the date property
         try:
             if type(date) == str:
                 if '-' in date and 'T' not in date:
@@ -70,6 +84,96 @@ class night():
             return -1
         self.date_ymd = Time(self.date, format = 'mjd', scale = 'utc').isot.split(sep = 'T')[0]
 
+        #Calculating lunar and solar paths as well as twilights
+        self.calculate_lunar_solar()
+    
+    #Update the limiting angle/angular distance
+    def change_limiting_angle(self, which, limit):
+        if which == 'min':
+            self.min_angle = limit
+        elif which == 'max':
+            self.max_angle = limit 
+        elif which == 'moon':
+            self.minimum_lunar_distance = limit
+        elif which == 'twilight':
+            self.limiting_twilight = limit.lower()
+
+            if self.limiting_twilight == 'astronomical':
+                self.twilight_limit = self.twilights[0]
+            elif self.limiting_twilight == 'nautical':
+                self.twilight_limit = self.twilights[1]
+            elif self.limiting_twilight == 'civil':
+                self.twilight_limit = self.twilights[2]
+
+        else:
+            return -1
+
+        #Reinitialise queue
+        self.clear_queue()
+
+    def clear_queue(self):
+        self.queue = pd.DataFrame(columns = ['name', 'ra', 'dec', 'priority', 'obs_times', 'obs_time_angles', 'night_peak', 'start_angle', 'start_ut']).set_index('name')
+        return
+
+    def clear_targets(self):
+        #Targets:
+        self.target_coords = []
+        self.night_peak = []
+        self.names = []
+        self.priorities = []
+        self.obs_times = []
+        self.obs_times_angles = []
+
+        #Paths:
+        self.paths = {}
+        self.lunar_distances = {}
+        self.nautical_directions = {}
+
+        #Data table:
+        self.data = pd.DataFrame(columns = ['name', 'ra', 'dec', 'priority', 'obs_times'])
+        return
+
+    def change_restricted_directions(self, new):
+        self.restricted_directions = new
+        return
+
+    #Update the observatory and recalculate the paths
+    def change_observatory(self, obs_id):
+        self.observatory = functions.retrieve_observatory(obs_id)
+        if self.observatory == -1:
+            return
+
+        #Calculating the lunar and solar paths as well as twilights
+        self.calculate_lunar_solar()
+        #Calculating the target paths across the sky
+        self.calculate_target_paths()
+
+    #Update the date and recalculate the paths
+    def change_date(self, date):
+        try:
+            if type(date) == str:
+                if '-' in date and 'T' not in date:
+                    date_ext = str(date) + 'T00:00:00.0'
+                    t = Time(date_ext, format = 'isot', scale = 'utc')
+                    self.date = float(t.mjd)
+                else:
+                    t = Time(date, format = 'isot', scale = 'utc')
+                    self.date = float(t.mjd)
+            else:
+                self.date = date
+        except:
+            print('The date parameter must be given in one of the following formats:\n\tmjd\n\tyyyy-mm-dd\n\tyyyy-mm-ddThh:mm:ss.ss')
+            return -1
+
+        self.date_ymd = Time(self.date, format = 'mjd', scale = 'utc').isot.split(sep = 'T')[0]
+
+        #Calculating the lunar and solar paths as well as twilights
+        self.calculate_lunar_solar()
+        #Calculating the target paths across the sky
+        self.calculate_target_paths()
+
+    #Calculating the lunar and solar paths as well as twilights
+    def calculate_lunar_solar(self):
         #Calculating the base earth rotation angle(ERA)
         self.era0 = functions.mjd_to_era(self.date + 1)
 
@@ -103,45 +207,46 @@ class night():
         lunar_dec = np.interp(self.mjd, [self.mjd[0], self.mjd[-1]], lunar_dec_ref)
         self.lunar_coords = [list(lunar_ra), list(lunar_dec)]
         self.lunar_path = functions.path_era([self.lunar_coords[0], self.lunar_coords[1]], self.observatory, self.era)
-    
+
+        #Reassigning the limiting twilight angles with the updated solar path
+        self.change_limiting_angle('twilight', self.limiting_twilight)
+
     #Loading observation targets    
     def load_targets_dashapp(self, contents):
         content_type, content_string = contents.split(',')
 
         decoded = base64.b64decode(content_string)
 
-        #if '.csv' in filename:
         data = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
         
         if len(data.columns) == 1:
             print('Cannot read objects from ' + filename + '. The default delimiter is set as a comma.')
             return -1
         
-        self.target_coords = []
-        
         for i in range(len(data['name'])):
-            ra0 = functions.convert_hms_ra(data['ra'][i])
-            dec0 = functions.convert_hms_dec(data['dec'][i])
+            if data['name'][i] not in self.data.index:
+                ra0 = functions.convert_hms_ra(data['ra'][i])
+                dec0 = functions.convert_hms_dec(data['dec'][i])
+    
+                if ra0 < self.era[0]:
+                    night_peak = int(round(ra0 + 360, 0))
+                else:
+                    night_peak = int(round(ra0, 0))
+    
+                self.target_coords.append([ra0, dec0])
+                self.night_peak.append(night_peak)
+                self.names.append(data['name'][i])
+    
+                try:
+                    self.priorities.append(int(data['priority'][i]))
+                except:
+                    pass
+                try:
+                    self.obs_times.append(data['obs_time'][i])
+                    self.obs_times_angles.append(int(np.ceil(data['obs_time'][i] * functions.degrees_per_second)))
+                except:
+                    pass
 
-            if ra0 < self.era[0]:
-                night_peak = int(round(ra0 + 360, 0))
-            else:
-                night_peak = int(round(ra0, 0))
-
-            self.target_coords.append([ra0, dec0])
-            self.night_peak.append(night_peak)
-            self.names.append(data['name'][i])
-
-            try:
-                self.priorities.append(int(data['priority'][i]))
-            except:
-                pass
-            try:
-                self.obs_times.append(data['obs_time'][i])
-                self.obs_times_angles.append(int(np.ceil(data['obs_time'][i] * functions.degrees_per_second)))
-            except:
-                pass
-        
         #Defining dictionary from which to construct the dataframe
         data_df = {'name':self.names, 'ra':np.array(self.target_coords)[:,0], 'dec':np.array(self.target_coords)[:,1]}
         if len(self.priorities) == len(self.names):
@@ -156,6 +261,10 @@ class night():
         self.data_duckdb = pd.DataFrame(data_df)
         self.data = self.data_duckdb.set_index('name')
         
+        #Calculating the target paths across the sky
+        self.calculate_target_paths()
+
+    def calculate_target_paths(self):
         #Calculating target paths across the sky
         self.paths = {}
         self.lunar_distances = {}
@@ -164,6 +273,54 @@ class night():
             self.paths[n] = functions.path_era([self.data['ra'][i], self.data['dec'][i]], self.observatory, self.era)
             self.lunar_distances[n] = functions.angle_to_moon([self.data['ra'][i], self.data['dec'][i]], self.lunar_coords)
             self.nautical_directions[n] = functions.calculate_pointing([self.data['ra'][i], self.data['dec'][i]], self.observatory, self.era)
+
+    #Adding individual observation target
+    def add_target(self, ra, dec, name = None, obs_time = None, priority = None):
+        #Reading information into arrays
+        self.target_coords.append([float(ra), float(dec)])
+        if name != None:
+            self.names.append(name)
+        else:
+            index = 1
+            for i in self.data.index:
+                if 'target' in i:
+                    index += 1
+            name = f'target{index}'
+            self.names.append(name)
+        if obs_time != None:
+            self.obs_times.append(int(obs_time))
+            self.obs_times_angles.append(int(np.ceil(obs_time * functions.degrees_per_second)))
+        else:
+            self.obs_times.append(600)
+            self.obs_times_angles.append(int(np.ceil(600 * functions.degrees_per_second)))
+        if priority != None:
+            self.priorities.append(int(priority))
+        else:
+            self.priorities.append(1)
+
+        if ra < self.era[0]:
+            night_peak = int(round(ra + 360, 0))
+        else:
+            night_peak = int(round(ra, 0))
+        self.night_peak.append(night_peak)
+
+        #Updating data
+        data_df = {'name':self.names, 'ra':np.array(self.target_coords)[:,0], 'dec':np.array(self.target_coords)[:,1]}
+        if len(self.priorities) == len(self.names):
+            data_df['priority'] = self.priorities
+        if len(self.obs_times) == len(self.names):
+            data_df['obs_times'] = self.obs_times
+            data_df['obs_time_angles'] = self.obs_times_angles
+        if len(self.night_peak) == len(self.names):
+            data_df['night_peak'] = self.night_peak
+
+        #Constructing dataframe
+        self.data_duckdb = pd.DataFrame(data_df)
+        self.data = self.data_duckdb.set_index('name')
+
+        self.paths[name] = functions.path_era([ra, dec], self.observatory, self.era)
+        self.lunar_distances[name] = functions.angle_to_moon([ra, dec], self.lunar_coords)
+        self.nautical_directions[name] = functions.calculate_pointing([ra, dec], self.observatory, self.era)
 
     #Loading observation targets
     def load_targets(self, objects, names = None, obs_times = None, priorities = None, delimiter = ','):
@@ -287,33 +444,19 @@ class night():
         #Plotting specified target traces
         if targets != None:
             for j, name in enumerate(targets):
-                fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], mode = 'lines', name = name))
+                fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], text = self.lunar_distances[name], mode = 'lines', name = name, hovertemplate='Time: %{x}'+'<br>Angle: %{y:.2f}°'+'<br>Lunar distance: %{text:.2f}°'))
 
-                if lunar_distance:
-                    for i in range(len(self.era)):
-                        if self.twilights[2][0]-10 < self.era[i] < self.twilights[2][1]+10 and (i + 4*j) % 30 == 0 and 5 < self.paths[name][i] < 85:
-                            fig.add_annotation(x=self.utc[i], y=self.paths[name][i], text=str(int(round(self.lunar_distances[name][i], 0))), showarrow=False, yshift=0)
         #Plotting traces of targets with specified priorities
         elif priorities != None:
             j = 0
             for name in self.data.index:
                 if self.data.priority[name] in priorities:
-                    fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], mode = 'lines', name = name))
+                    fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], text = self.lunar_distances[name], mode = 'lines', name = name, hovertemplate='Time: %{x}'+'<br>Angle: %{y:.2f}°'+'<br>Lunar distance: %{text:.2f}°'))
 
-                    if lunar_distance:
-                        for i in range(len(self.era)):
-                            if self.twilights[2][0]-10 < self.era[i] < self.twilights[2][1]+10 and (i + 4*j) % 30 == 0 and 5 < self.paths[name][i] < 85:
-                                fig.add_annotation(x=self.utc[i], y=self.paths[name][i], text=str(int(round(self.lunar_distances[name][i], 0))), showarrow=False, yshift=0)
-                    j += 1
         #Plotting all target traces
         else:
             for j, name in enumerate(self.data.index):
-                fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], mode = 'lines', name = name))
-
-                if lunar_distance:
-                    for i in range(len(self.era)):
-                        if self.twilights[2][0]-10 < self.era[i] < self.twilights[2][1]+10 and (i + 4*j) % 30 == 0 and 5 < self.paths[name][i] < 85:
-                            fig.add_annotation(x=self.utc[i], y=self.paths[name][i], text=str(int(round(self.lunar_distances[name][i], 0))), showarrow=False, yshift=0)
+                fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], text = self.lunar_distances[name], mode = 'lines', name = name, hovertemplate='Time: %{x}'+'<br>Angle: %{y:.2f}°'+'<br>Lunar distance: %{text:.2f}°'))
             
         #Plotting moon trace
         if moon:
@@ -383,12 +526,12 @@ class night():
         for name in self.queue.index:
             if '__gap' not in name:
                 cut_paths[name] = functions.cut_array(self.era, self.paths[name], [self.queue['start_angle'][name], self.queue['start_angle'][name]+self.queue['obs_time_angles'][name]], z = self.utc)
-                fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], mode = 'lines', name = name, line = dict(color = colours['path']), showlegend = False))
+                fig.add_trace(go.Scatter(x=self.utc, y=self.paths[name], text = self.lunar_distances[name], mode = 'lines', name = name, line = dict(color = colours['path']), showlegend = False, hovertemplate='Time: %{x}'+'<br>Angle: %{y:.2f}°'+'<br>Lunar distance: %{text:.2f}°'))
     
         #Plotting target traces
         for name in self.queue.index:
             if '__gap' not in name:
-                fig.add_trace(go.Scatter(x=cut_paths[name][2], y=cut_paths[name][1], mode = 'lines', name = name, fill='tozeroy', line = dict(color = priority_colours[self.queue.priority[name]])))
+                fig.add_trace(go.Scatter(x=cut_paths[name][2], y=cut_paths[name][1], text = self.lunar_distances[name], mode = 'lines', name = name, fill='tozeroy', line = dict(color = priority_colours[self.queue.priority[name]]), hovertemplate='Time: %{x}'+'<br>Angle: %{y:.2f}°'+'<br>Lunar distance: %{text:.2f}°'))
     
         #Plotting moon trace
         if moon:
@@ -414,7 +557,7 @@ class night():
             fig.add_trace(go.Scatter(x=[self.utc[0], self.utc[-1]], y=[self.min_angle, self.min_angle], line = dict(color = 'rgba(214, 27, 27, 0)'), fillcolor = 'rgba(214, 27, 27, 0.3)', showlegend=False, fill = 'tozeroy'))
             fig.add_trace(go.Scatter(x=[self.utc[0], self.utc[-1]], y=[100, 100], line = dict(color = 'rgba(214, 27, 27, 0)'), fillcolor = 'rgba(214, 27, 27, 0.3)', showlegend=False))
             fig.add_trace(go.Scatter(x=[self.utc[0], self.utc[-1]], y=[self.max_angle, self.max_angle], line = dict(color = 'rgba(214, 27, 27, 0)'), fillcolor = 'rgba(214, 27, 27, 0.3)', showlegend=False, fill = 'tonexty'))
-    
+        
         #Shading ground
         fig.add_trace(go.Scatter(x=[self.utc[0], self.utc[-1]], y=[0, 0], line = dict(color = 'black'), showlegend=False))
         fig.add_trace(go.Scatter(x=[self.utc[0], self.utc[-1]], y=[-90, -90], line = dict(color = 'black'), fill='tonexty', fillcolor='rgba(0, 0, 0, 0.8)', showlegend=False))
@@ -440,22 +583,24 @@ class night():
         else:
             fig.show()
 
-    def generate_queue(self, limiting_twilight = 'astronomical', restricted_directions = []):
-        try:
-            self.restricted_directions = []
-            for d in restricted_directions:
-                self.restricted_directions.append(d.upper())
-    
-            #Deciding which sunset to start the queue from
-            if limiting_twilight == 'astronomical':
-                self.limiting_twilight = self.twilights[0]
-            elif limiting_twilight == 'nautical':
-                self.limiting_twilight = self.twilights[1]
-            elif limiting_twilight == 'civil':
-                self.limiting_twilight = self.twilights[2]
-            else:
-                print(f"'{limiting_twilight}' not and acceptable twilight setting. The options are 'astronomical', 'nautical', and 'civil'. Defaulting to 'astronomical'.")
-                self.limiting_twilight = self.twilights[0]
+    def generate_queue(self, limiting_twilight = 'astronomical', restricted_directions = [], dashapp = False):
+        #try:
+        if 1:
+            if dashapp == False:
+                self.restricted_directions = []
+                for d in restricted_directions:
+                    self.restricted_directions.append(d.upper())
+
+                #Deciding which sunset to start the queue from
+                if limiting_twilight == 'astronomical':
+                    self.twilight_limit = self.twilights[0]
+                elif limiting_twilight == 'nautical':
+                    self.twilight_limit = self.twilights[1]
+                elif limiting_twilight == 'civil':
+                    self.twilight_limit = self.twilights[2]
+                else:
+                    print(f"'{limiting_twilight}' not and acceptable twilight setting. The options are 'astronomical', 'nautical', and 'civil'. Defaulting to 'astronomical'.")
+                    self.twilight_limit = self.twilights[0]
     
             #Creating empty dataframe to hold to queue
             self.queue = pd.DataFrame(columns = ['name', 'ra', 'dec', 'priority', 'obs_times', 'obs_time_angles', 'night_peak', 'start_angle', 'start_ut']).set_index('name')
@@ -465,29 +610,29 @@ class night():
             data = self.data_duckdb
             
             #Dividing up the target table into priorities ordered by peak ra throughout the night
-            self.priorities = set(self.data['priority'])
+            priorities = set(self.data['priority'])
             self.priority_tables = {}
-            for p in self.priorities:
+            for p in priorities:
                 self.priority_tables[p] = duckdb.query(f"SELECT * FROM data WHERE priority = {p} ORDER BY night_peak ASC;").df()
     
-            for priority in self.priorities:
+            for priority in priorities:
                 for name in self.priority_tables[priority].name:
                     self.add_to_queue(name)
     
             #If we are yet to cross the morning twilight however have now observable targets remaining, introduce a gap to the queue
             try:
-                while self.queue.start_angle[-1] + self.queue.obs_time_angles[-1] < self.limiting_twilight[1]:
+                while self.queue.start_angle[-1] + self.queue.obs_time_angles[-1] < self.twilight_limit[1]:
                     self.add_gap_to_queue()
                     self.check_reserve_list()
             except:
                 self.add_gap_to_queue()
                 self.check_reserve_list()
-                while self.queue.start_angle[-1] + self.queue.obs_time_angles[-1] < self.limiting_twilight[1]:
+                while self.queue.start_angle[-1] + self.queue.obs_time_angles[-1] < self.twilight_limit[1]:
                     self.add_gap_to_queue()
                     self.check_reserve_list()
 
-        except:
-            pass 
+        #except:
+        #    pass
 
     def add_to_queue(self, name):
         #Check if object meets the angular requirements somewhere between astronomical sunset and sunrise
@@ -495,7 +640,7 @@ class night():
 
             #If this is the first object add it at astronomical sunset
             if len(self.queue) == 0:
-                start1 = int(np.ceil(self.limiting_twilight[0]))
+                start1 = int(np.ceil(self.twilight_limit[0]))
 
                 #Compiling row dictionary adding target after
                 new_row1 = {'ra':self.data.ra[name], 'dec':self.data.dec[name], 'priority':self.data.priority[name], 'obs_times':self.data.obs_times[name], 'obs_time_angles':self.data.obs_time_angles[name], 'night_peak':self.data.night_peak[name], 'start_angle':start1, 'start_ut':functions.era_to_utc(start1)} 
@@ -580,7 +725,8 @@ class night():
 
     #Running through the queue to test if the objects are observable
     def check_valid_queue(self, queue):
-        for name in queue.index:
+        #for name in queue.index:
+        for name in queue.index[-2:]:
             if '__gap' not in name:
                 cut_path = functions.cut_array(self.era, self.paths[name], [queue['start_angle'][name], queue['start_angle'][name]+queue['obs_time_angles'][name]], self.lunar_distances[name])
                 cut_nautical_direction = functions.cut_array(self.era, self.nautical_directions[name], [queue['start_angle'][name], queue['start_angle'][name]+queue['obs_time_angles'][name]])[1]
@@ -591,7 +737,7 @@ class night():
                         return False
                 
                     #Overlapping with final twilight
-                    if cut_path[0][i] > self.limiting_twilight[1]:
+                    if cut_path[0][i] > self.twilight_limit[1]:
                         return False
 
         #If no objects have thrown up a false flag, return True
@@ -599,8 +745,8 @@ class night():
 
     def check_valid_object(self, name):
         #Cut object path to between astronomical sunset and sunrise
-        cut_path = functions.cut_array(self.era, self.paths[name], [self.limiting_twilight[0], self.limiting_twilight[1]], self.lunar_distances[name])
-        cut_nautical_direction = functions.cut_array(self.era, self.nautical_directions[name], [self.limiting_twilight[0], self.limiting_twilight[1]])[1]
+        cut_path = functions.cut_array(self.era, self.paths[name], [self.twilight_limit[0], self.twilight_limit[1]], self.lunar_distances[name])
+        cut_nautical_direction = functions.cut_array(self.era, self.nautical_directions[name], [self.twilight_limit[0], self.twilight_limit[1]])[1]
 
         for i in range(len(cut_path[0])):
             if self.min_angle < cut_path[1][i] < self.max_angle and cut_path[2][i] > self.minimum_lunar_distance and cut_nautical_direction[i] not in self.restricted_directions:
@@ -655,5 +801,5 @@ class night():
                 self.queue.loc[f'__gap{index}__'] = new_row
         except:
             index = 1
-            new_row = {'ra':None, 'dec':None, 'priority':None, 'obs_times':None, 'obs_time_angles':1, 'night_peak':None, 'start_angle':self.limiting_twilight[0], 'start_ut':functions.era_to_utc(self.limiting_twilight[0])} 
+            new_row = {'ra':None, 'dec':None, 'priority':None, 'obs_times':None, 'obs_time_angles':1, 'night_peak':None, 'start_angle':self.twilight_limit[0], 'start_ut':functions.era_to_utc(self.twilight_limit[0])} 
             self.queue.loc[f'__gap{index}__'] = new_row

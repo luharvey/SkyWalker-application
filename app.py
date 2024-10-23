@@ -1,5 +1,5 @@
 #Module import
-from dash import Dash, html, dcc, Output, Input, ctx, dash_table
+from dash import Dash, html, dcc, Output, Input, State, ctx, dash_table
 import dash_daq as daq
 import plotly.graph_objects as go
 import skywalker
@@ -62,14 +62,51 @@ def description_card():
             ]
         )
 
-#Creating the control card
-def controls_card():
+#Toggle lunar distances
+#daq.BooleanSwitch(
+#    id = 'lunar_distance_toggle',
+#    label = 'Lunar distances',
+#    labelPosition = 'top',
+#    on = False,
+#    color = '#ae93ff',
+#    style={"color": "#dddddd", 'margin-bottom':5}),
+
+#Creating the upload card
+def upload_card():
     """
     :return: A Div containing dashboard controls.
     """
     return html.Div(
         children=[
+            #Text input
+            html.P('Target entry',
+                style={
+                    'textAlign':'center',
+                    'font-size':14,
+                    'color':'#dddddd',
+                    'margin-top':10
+                    }
+                ),
+            html.Div(
+                dcc.Textarea(
+                    id='add_target_text',
+                    value='',
+                    placeholder = 'ra dec name priority time',
+                    style={'width': '100%', 'height': 100},
+                    ),
+                style = {'margin-left':'5%', 'margin-right':'5%'}
+                ),
+            html.Center(html.Button('Add', id='add_target_button', n_clicks=0)),
+
             #File upload
+            html.P('File upload',
+                style={
+                    'textAlign':'center',
+                    'font-size':14,
+                    'color':'#dddddd',
+                    'margin-top':30
+                    }
+                ),
             dcc.Upload(
                 id="upload_data",
                 children=html.Div(['Drag and Drop or ', html.A('Select File')]),
@@ -86,12 +123,27 @@ def controls_card():
                 multiple=False
                 ),
 
+            #Clear targets
+            html.Center(
+                html.Button('Clear targets', id='clear_target_button', n_clicks=0),
+                style = {'margin-top':40})
+            ]
+            )
+
+#Creating the controls card
+def controls_card():
+    """
+    :return: A Div containing dashboard controls.
+    """
+    return html.Div(
+        children=[
             #Date selection
             html.P('Date',
                 style={
                     'textAlign':'center',
                     'font-size':14,
-                    'color':'#dddddd'
+                    'color':'#dddddd',
+                    'margin-top':10
                     }
                 ),
             html.Center([
@@ -106,15 +158,6 @@ def controls_card():
                     )],
                 style = {'margin-bottom':5}
                 ),
-
-            #Toggle lunar distances
-            daq.BooleanSwitch(
-                id = 'lunar_distance_toggle',
-                label = 'Lunar distances',
-                labelPosition = 'top',
-                on = False,
-                color = '#ae93ff',
-                style={"color": "#dddddd", 'margin-bottom':5}),
 
             #Observatory selection
             html.P('Observatory',
@@ -219,7 +262,21 @@ def layout():
         html.Div(
             id="left-column",
             className="three columns",
-            children = [title_card(), controls_card()],
+            children = [
+                title_card(),
+                dcc.Tabs([
+                    dcc.Tab(
+                        label = 'Upload',
+                        className='custom-tab-light',
+                        selected_className='custom-tab-light-selected',
+                        children = [upload_card()]),
+                    dcc.Tab(
+                        label = 'Controls',
+                        className='custom-tab-light',
+                        selected_className='custom-tab-light-selected',
+                        children = [controls_card()])
+                    ])
+                ],
             style={'background-color': '#2b2b2b', 'font-family':'Trebuchet MS', "height": "100vh"}
             ),
         #Right column
@@ -313,7 +370,10 @@ def layout():
         ]
 
 #Creating night instance
+global n
 n = skywalker.night('aao')
+#n.load_targets('/Users/luharvey/GitHub/SkyWalker/pessto_test_classifications_cut.csv')
+
 fig_paths = n.plot_paths(dashapp = True, dark = True)
 fig_queue = n.plot_paths(dashapp = True, dark = True)
 
@@ -327,53 +387,121 @@ app.layout = layout()
 
 #User input observability plot and data table tabs
 @app.callback(
-    [   
-        Output("graph_paths", "figure"),
-        Output("data_table", "data")
-    ],
-    [
-        Input("date_picker", "date"),
-        Input("lunar_distance_toggle", "on"),
-        Input("observatory_dropdown", "value"),
-        Input("upload_data", "contents"),
-        Input("minimum_angle", "value"),
-        Input("maximum_angle", "value")
-    ]
+    Output("graph_paths", "figure"),
+    Output("data_table", "data"),
+    Output("upload_data", "filename"),
+    Output("upload_data", "contents"),
+    Output('add_target_text', 'value'),
+
+    Input("date_picker", "date"),
+    Input("observatory_dropdown", "value"),
+    Input("upload_data", "contents"),
+    Input("minimum_angle", "value"),
+    Input("maximum_angle", "value"),
+    Input("add_target_button", 'n_clicks'),
+    Input('add_target_text', 'value'),
+    Input("minimum_lunar_distance", "value"),
+    Input("twilight_dropdown", "value"),
+    Input("pointing_checklist", 'value'),
+    Input("clear_target_button", 'n_clicks')
     )
-def update_paths_plot(date, lunar_distance, observatory_name, upload_data, min_angle, max_angle):
-    n = skywalker.night(date = Time(str(date) + 'T00:00:00.0', format = 'isot', scale = 'utc').mjd, obs_id = observatories['ID'][observatory_name], min_angle = min_angle, max_angle = max_angle)
+def update_paths_plot(date, observatory, upload_data, min_angle, max_angle, add_target, add_target_text, minimum_lunar_distance, limiting_twilight, restricted_directions, clear_target):
+    #Updating date
+    if date != n.date_ymd:
+        n.change_date(date)
+    #Updating observatory
+    if observatory != n.observatory.name:
+        n.change_observatory(observatories['ID'][observatory])
+    #Updating minimum angle
+    if min_angle != n.min_angle:
+        n.change_limiting_angle('min', min_angle)
+    #Updating maximum angle
+    if max_angle != n.max_angle:
+        n.change_limiting_angle('max', max_angle)
+    #Updating minimum lunar angular distance
+    if minimum_lunar_distance != n.minimum_lunar_distance:
+        n.change_limiting_angle('moon', minimum_lunar_distance)
+    #Updating limiting twilight
+    if limiting_twilight != n.limiting_twilight:
+        n.change_limiting_angle('twilight', limiting_twilight)
+    #Updating unallowed pointings
+    if restricted_directions != n.restricted_directions:
+        n.change_restricted_directions(restricted_directions)
+    #Uploading targets
     if upload_data != None:
         n.load_targets_dashapp(upload_data)
 
+    if "clear_target_button" == ctx.triggered_id:
+        n.clear_targets()
+
+    if "add_target_button" == ctx.triggered_id:
+        input_lines = add_target_text.split(sep = '\n')
+
+        for t in input_lines:
+            inputs = t.split(sep = ' ')
+    
+            try:
+                ra = float(inputs[0])
+                dec = float(inputs[1])
+            
+                if len(inputs) > 2:
+                    name = inputs[2]
+                else:
+                    name = None
+    
+                if len(inputs) > 3:
+                    try:
+                        priority = int(inputs[3])
+                    except:
+                        priority = None
+                else:
+                    priority = None
+    
+                if len(inputs) > 4:
+                    try:
+                        obs_time = int(inputs[4])
+                    except:
+                        obs_time = None
+                else:
+                    obs_time = None
+            
+                n.add_target(ra, dec, name = name, obs_time = obs_time, priority = priority)
+            
+            except:
+                pass
+
+        output_text = ''
+    else:
+        output_text = add_target_text
+
+    #Updating output table
     output_table = n.data.copy().reset_index()
 
-    return n.plot_paths(dashapp = True, dark = True, lunar_distance = lunar_distance), output_table.to_dict('records')
+    return n.plot_paths(dashapp = True, dark = True), output_table.to_dict('records'), '', None, output_text
 
-#User input queue plot and table tabs
+#User input observability plot and data table tabs
 @app.callback(
-    [
-        Output("graph_queue", "figure"),
-        Output("queue_table", "data")
-    ],
-    [
-        Input("date_picker", "date"),
-        Input("observatory_dropdown", "value"),
-        Input("upload_data", "contents"),
-        Input("minimum_angle", "value"),
-        Input("maximum_angle", "value"),
-        Input("gen_queue", 'n_clicks'),
-        Input("pointing_checklist", 'value'),
-        Input("minimum_lunar_distance", "value"),
-        Input("twilight_dropdown", "value")
-    ]
+    Output("graph_queue", "figure"),
+    Output("queue_table", "data"),
+
+    Input("gen_queue", 'n_clicks'),
+    Input("date_picker", "date"),
+    Input("observatory_dropdown", "value"),
+    Input("upload_data", "contents"),
+    Input("minimum_angle", "value"),
+    Input("maximum_angle", "value"),
+    Input("add_target_button", 'n_clicks'),
+    Input('add_target_text', 'value'),
+    Input("minimum_lunar_distance", "value"),
+    Input("twilight_dropdown", "value"),
+    Input("pointing_checklist", 'value'),
+    Input("clear_target_button", 'n_clicks')
     )
-def update_queue_plot(date, observatory_name, upload_data, min_angle, max_angle, trigger_queue, pointing_restrictions, minimum_lunar_distance, limiting_twilight):
-    n = skywalker.night(date = Time(str(date) + 'T00:00:00.0', format = 'isot', scale = 'utc').mjd, obs_id = observatories['ID'][observatory_name], min_angle = min_angle, max_angle = max_angle, minimum_lunar_distance = minimum_lunar_distance)
-    if upload_data != None:
-        n.load_targets_dashapp(upload_data)
+def update_queue_plot(trigger_queue, date, observatory, upload_data, min_angle, max_angle, add_target, add_target_text, minimum_lunar_distance, limiting_twilight, restricted_directions, clear_target):
+    n.clear_queue()
 
     if "gen_queue" == ctx.triggered_id:
-        n.generate_queue(restricted_directions = pointing_restrictions, limiting_twilight = limiting_twilight.lower())
+        n.generate_queue(dashapp = True)
 
     output_table = n.queue.copy().reset_index()
 
