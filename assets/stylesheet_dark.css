@@ -260,6 +260,15 @@ input[type="button"].button-primary:focus {
     background-color: #1e1e1e !Important;
     color: #ddd !Important;
 }
+.custom-tab-light {
+    background-color: #3c3c3c !Important;
+    color: #ddd !Important;
+}
+.custom-tab-light-selected {
+    border-top-color: #ff9f06 !Important;
+    background-color: #2b2b2b !Important;
+    color: #ddd !Important;
+}
 
 /* Dropdown */
 .has-value.Select--single > .Select-control .Select-value .Select-value-label,
